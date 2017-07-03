@@ -43,12 +43,21 @@ head(orders)
 
 ```{r}
 head(products)
+dim(products)
 ```
 
 
 ```{r}
 head(order_products_train, n = 20)
+dim( order_products_train )
 ```
+
+
+```{r}
+head(order_products_prior, n = 20)
+dim(order_products_prior)
+```
+
 ```{r}
 head(aisles, n = 20)
 ```
@@ -59,7 +68,6 @@ head(departments, n = 20)
 
 Recode variables
 
-We should do some recoding and convert character variables to factors.
 
 ```{r}
 orders      <- orders      %>% mutate(order_hour_of_day = as.numeric(order_hour_of_day), eval_set = as.factor(eval_set))
@@ -72,8 +80,64 @@ departments <- departments %>% mutate(department        = as.factor(department))
 orders
 ```
 
+Create for each customer a density matrix. For those who repeatedly order the same products this matrix will be dense, and for
+those who order different products each time this matrix will be sparse.
 
 ```{r}
-user_id_i <- orders %>% filter(user_id==2)
-user_id_i
+user_id_i = 5
+
+user_id_i_prior <- orders %>% filter(user_id==user_id_i, eval_set == 'prior' ) 
+user_id_i_prior <- user_id_i_prior %>% mutate( order_id_num = seq( nrow(user_id_i_prior) ) ) %>% 
+                                       select( order_id,order_id_num, user_id )  %>% 
+                                       left_join(order_products_prior,by="order_id") %>%
+                                       left_join(products, by = 'product_id')
+user_id_i_prior <- user_id_i_prior %>% mutate( order_id_num = as.factor(order_id_num), product_id = as.factor(product_id) )
+user_id_i_prior
+
+user_id_i_prior_num_order   = length( levels(user_id_i_prior$order_id_num  ) )
+user_id_i_prior_num_product = length( levels(user_id_i_prior$product_id) )
+
+#create an empty table
+user_id_i_prior_tbl = matrix( 0, nrow = user_id_i_prior_num_product, ncol = user_id_i_prior_num_order)
+rownames(user_id_i_prior_tbl) = unique( user_id_i_prior$product_name )
+colnames(user_id_i_prior_tbl) = levels(user_id_i_prior$order_id_num  )
+
+#insert values in the table
+for( i in seq(user_id_i_prior_num_order) ){
+  
+  order_id_num_j = levels(user_id_i_prior$order_id_num  )[i]; order_id_num_j
+  product_name   = user_id_i_prior %>% filter( order_id_num == order_id_num_j )
+  product_name
+  
+  product_name   = product_name %>% select(product_name)
+  product_name
+  
+  #convert from factor back to character
+  product_name %>% mutate_if(is.factor, as.character) -> product_name
+  product_name
+  
+  row_indx = as.vector( sapply( product_name[,1], function(x) which( x == rownames(user_id_i_prior_tbl) ) ) )
+  row_indx
+  
+  user_id_i_prior_tbl[row_indx,order_id_num_j] = 1
+}
+
+print( paste( "number of orders in prior: "  , user_id_i_prior_num_order   ) )
+print( paste( "number of products in prior: ", user_id_i_prior_num_product ) )
+
+
+
+```
+
+```{r}
+user_id_i_train <- orders %>% filter(user_id==user_id_i, eval_set == 'train')  %>% 
+                              select( order_id, user_id )  %>% 
+                              left_join(order_products_train,by="order_id") %>%
+                              left_join(products, by = 'product_id')
+user_id_i_train
+```
+
+
+```{r}
+
 ```
