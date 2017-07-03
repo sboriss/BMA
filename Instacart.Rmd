@@ -56,3 +56,24 @@ head(aisles, n = 20)
 ```{r}
 head(departments, n = 20)
 ```
+
+Recode variables
+
+We should do some recoding and convert character variables to factors.
+
+```{r}
+orders      <- orders      %>% mutate(order_hour_of_day = as.numeric(order_hour_of_day), eval_set = as.factor(eval_set))
+products    <- products    %>% mutate(product_name      = as.factor(product_name))
+aisles      <- aisles      %>% mutate(aisle             = as.factor(aisle))
+departments <- departments %>% mutate(department        = as.factor(department))
+```
+
+```{r}
+orders
+```
+
+
+```{r}
+user_id_i <- orders %>% filter(user_id==2)
+user_id_i
+```
