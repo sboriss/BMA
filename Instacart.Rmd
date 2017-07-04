@@ -22,7 +22,10 @@ library(ggplot2)
 library(knitr)
 library(stringr)
 library(DT)
+library( mvoutlier )
+```
 
+```{r}
 orders <- fread('./DATA/orders.csv')
 products <- fread('./DATA/products.csv')
 order_products_train <- fread('./DATA/order_products__train.csv')
@@ -66,6 +69,16 @@ head(aisles, n = 20)
 head(departments, n = 20)
 ```
 
+```{r}
+orders
+```
+
+
+```{r}
+
+```
+
+
 Recode variables
 
 
@@ -76,68 +89,163 @@ aisles      <- aisles      %>% mutate(aisle             = as.factor(aisle))
 departments <- departments %>% mutate(department        = as.factor(department))
 ```
 
+
+Get user id's for train and test parts
 ```{r}
-orders
+user_id_train = orders %>% filter(eval_set == "train") %>% 
+                           select( user_id )
+user_id_train = user_id_train[['user_id']]
+
+length(user_id_train)
+
+user_id_test = orders %>% filter(eval_set == "test") %>% 
+                           select( user_id )
+user_id_test = user_id_test[['user_id']]
+length(user_id_test)
 ```
 
 Create for each customer a density matrix. For those who repeatedly order the same products this matrix will be dense, and for
 those who order different products each time this matrix will be sparse.
 
 ```{r}
-user_id_i = 5
 
-user_id_i_prior <- orders %>% filter(user_id==user_id_i, eval_set == 'prior' ) 
-user_id_i_prior <- user_id_i_prior %>% mutate( order_id_num = seq( nrow(user_id_i_prior) ) ) %>% 
-                                       select( order_id,order_id_num, user_id )  %>% 
-                                       left_join(order_products_prior,by="order_id") %>%
-                                       left_join(products, by = 'product_id')
-user_id_i_prior <- user_id_i_prior %>% mutate( order_id_num = as.factor(order_id_num), product_id = as.factor(product_id) )
-user_id_i_prior
+ptm <- proc.time()
 
-user_id_i_prior_num_order   = length( levels(user_id_i_prior$order_id_num  ) )
-user_id_i_prior_num_product = length( levels(user_id_i_prior$product_id) )
-
-#create an empty table
-user_id_i_prior_tbl = matrix( 0, nrow = user_id_i_prior_num_product, ncol = user_id_i_prior_num_order)
-rownames(user_id_i_prior_tbl) = unique( user_id_i_prior$product_name )
-colnames(user_id_i_prior_tbl) = levels(user_id_i_prior$order_id_num  )
-
-#insert values in the table
-for( i in seq(user_id_i_prior_num_order) ){
+big_features <- lapply( user_id_train[1:300], function( user_id_i ){ # user_id_i = 5
   
-  order_id_num_j = levels(user_id_i_prior$order_id_num  )[i]; order_id_num_j
-  product_name   = user_id_i_prior %>% filter( order_id_num == order_id_num_j )
-  product_name
-  
-  product_name   = product_name %>% select(product_name)
-  product_name
-  
-  #convert from factor back to character
-  product_name %>% mutate_if(is.factor, as.character) -> product_name
-  product_name
-  
-  row_indx = as.vector( sapply( product_name[,1], function(x) which( x == rownames(user_id_i_prior_tbl) ) ) )
-  row_indx
-  
-  user_id_i_prior_tbl[row_indx,order_id_num_j] = 1
-}
+    user_id_i_prior <- orders %>% filter(user_id==user_id_i, eval_set == 'prior' ) 
+    user_id_i_prior <- user_id_i_prior %>% mutate( order_id_num = seq( nrow(user_id_i_prior) ) ) %>% 
+                                           select( order_id,order_id_num, user_id )  %>% 
+                                           left_join(order_products_prior,by="order_id") %>%
+                                           left_join(products            , by = 'product_id')
 
-print( paste( "number of orders in prior: "  , user_id_i_prior_num_order   ) )
-print( paste( "number of products in prior: ", user_id_i_prior_num_product ) )
+    user_id_i_prior <- user_id_i_prior %>% mutate( product_id = as.factor(product_id) )
+    user_id_i_prior
+    
+    user_id_i_prior_num_order   = max(            user_id_i_prior$order_id_num )
+    user_id_i_prior_num_product = length( levels( user_id_i_prior$product_id   ) )
+    
+    #create an empty table
+    user_id_i_prior_tbl = matrix( 0, nrow = user_id_i_prior_num_product, ncol = user_id_i_prior_num_order)
+    rownames(user_id_i_prior_tbl) = unique( user_id_i_prior$product_name )
+    colnames(user_id_i_prior_tbl) = levels(user_id_i_prior$order_id_num  )
+    
+    #insert values in the table
+    for( i in seq( user_id_i_prior_num_order ) ){
+    
+      product_name   = user_id_i_prior %>% filter( order_id_num == i )
+      product_name
+      
+      product_name   = product_name %>% select(product_name)
+      product_name
+      
+      #convert from factor back to character
+      product_name %>% mutate_if(is.factor, as.character) -> product_name
+      product_name
+      
+      row_indx = as.vector( sapply( product_name[,1], function(x) which( x ==     rownames(user_id_i_prior_tbl) ) ) )
+      row_indx
+      
+      user_id_i_prior_tbl[row_indx,i] = 1
+    }
+    
+    num_purchases_in_prior = sum( colSums( user_id_i_prior_tbl ) )
+    
+    dens_tbl_i = num_purchases_in_prior / ( user_id_i_prior_num_order * user_id_i_prior_num_product)
+    
+    #get average order size in prior
+    ave_size_order_prior_i = as.vector( colSums( user_id_i_prior_tbl ) ) %>% mean
+    ave_size_order_prior_i
+    
+    #get the size of last order in prior
+    lst_size_order_prior_i = as.vector( tail( colSums( user_id_i_prior_tbl), n = 1) ) 
+    lst_size_order_prior_i
+    
+    #get average proportion of ordered items in second, third,..., last orders
+    prop_reordered_ave_prior = user_id_i_prior %>% filter( order_id_num != 1) %>%
+                                                   select( reordered ) %>% colMeans
+    prop_reordered_ave_prior
+    
+    #get proportion of reordered items in the last order in
+    prop_reordered_lst_prior = user_id_i_prior %>% filter( order_id_num == user_id_i_prior_num_order) %>%
+                                                   select( reordered ) %>% colMeans                       
+    prop_reordered_lst_prior           
+    
+    ########### extract from train ##############
+    user_id_i_train <- orders %>% filter(user_id==user_id_i, eval_set == 'train')  %>% 
+                                  select( order_id, user_id )  %>% 
+                                  left_join(order_products_train,by="order_id") %>%
+                                  left_join(products, by = 'product_id')
+    user_id_i_train
+    
+    size_order_train     = nrow( user_id_i_train )
+    prop_reordered_train = user_id_i_train %>% select( reordered )  %>% colMeans
+    prop_reordered_train
+    ########### extract from train ##############
+    
+    
+    print( paste( "number of orders in prior: "  , user_id_i_prior_num_order   ) )
+    print( paste( "number of products in prior: ", user_id_i_prior_num_product ) )
+    
+    
+    #put features together
+    df_features = data.frame( user_id                     = user_id_i, 
+                              num_orders_in_prior         = user_id_i_prior_num_order,
+                              num_products_in_prior       = user_id_i_prior_num_product,
+                              num_purchases_in_prior      = num_purchases_in_prior,
+                              density_order_products      = dens_tbl_i,
+                              ave_ordersize_in_prior      = ave_size_order_prior_i,
+                              lst_ordersize_in_prior      = lst_size_order_prior_i,
+                              ave_prop_reordered_in_prior = prop_reordered_ave_prior,
+                              lst_prop_reordered_in_prior = prop_reordered_lst_prior,
+                              ordersize_in_train          = size_order_train,
+                              prop_reordered_in_train     = prop_reordered_train )
+    rownames(df_features) = user_id_i
+    
+    df_features
+})
+cat('\\n***EXECUTION TIME***:\n')
+print( proc.time() - ptm )
 
 
+big_features = do.call( rbind.data.frame, big_features )
+path_big_features = './DATA/SUMM/big_features.csv'
 
+fwrite(big_features, path_big_features)
 ```
 
 ```{r}
-user_id_i_train <- orders %>% filter(user_id==user_id_i, eval_set == 'train')  %>% 
-                              select( order_id, user_id )  %>% 
-                              left_join(order_products_train,by="order_id") %>%
-                              left_join(products, by = 'product_id')
-user_id_i_train
+big_features = fread( path_big_features )
 ```
 
 
 ```{r}
+#crossplot of average ordersize in prior and ordersize in train
+colnames( big_features )
 
+attach(big_features)
+plot(ave_ordersize_in_prior, ordersize_in_train)
+plot(lst_ordersize_in_prior, ordersize_in_train)
+
+corr.plot(ave_ordersize_in_prior, ordersize_in_train, xlab ='ave_ordersize_in_prior', ylab = 'ordersize_in_train' )
+
+corr.plot(lst_ordersize_in_prior, ordersize_in_train, xlab ='lst_ordersize_in_prior', ylab = 'ordersize_in_train' )  
+
+corr.plot(ave_ordersize_in_prior, lst_ordersize_in_prior, xlab ='ave_ordersize_in_prior', ylab = 'lst_ordersize_in_prior' )  
+detach(big_features)
+```
+```{r}
+#crossplot of average proportion reordered in prior and proportion reordered in train
+colnames( big_features )
+
+attach(big_features)
+plot(ave_prop_reordered_in_prior, prop_reordered_in_train)
+plot(lst_prop_reordered_in_prior, prop_reordered_in_train)
+
+corr.plot(ave_prop_reordered_in_prior, prop_reordered_in_train, xlab ='ave_prop_reordered_in_prior', ylab = 'prop_reordered_in_train' )
+
+corr.plot(lst_prop_reordered_in_prior, prop_reordered_in_train, xlab ='lst_prop_reordered_in_prior', ylab = 'prop_reordered_in_train' )  
+
+corr.plot(ave_prop_reordered_in_prior, lst_prop_reordered_in_prior, xlab ='ave_prop_reordered_in_prior', ylab = 'lst_prop_reordered_in_prior' )  
+detach(big_features)
 ```
