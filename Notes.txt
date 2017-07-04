@@ -1,0 +1,411 @@
+http://www.thekitchn.com/i-had-my-groceries-delivered-by-instacart-and-heres-how-it-went-214795
+
+
+Why your bananas could soon cost more in the afternoon
+http://www.bbc.com/news/business-40423114
+
+
+http://dl.acm.org/citation.cfm?doid=1014052.1014098
+Predicting customer shopping lists from point-of-sale purchase data
+
+BOOK: Hands-On Machine Learning with Scikit-Learn and TensorFlow: Concepts, Tools, and Techniques to Build Intelligent Systems 1st Edition
+by Aurélien Géron
+
+BOOK: Mastering Data Mining: The Art and Science of Customer Relationship Management 1st Edition
+by Michael J. A. Berry
+
+============================
+1. Heterogeniety index of each customer:
+  - by products
+  - by aisles
+  - by departments
+  - by size
+  
+  The idea is that some customers' shopping list is more stable and hence better to predict
+  
+2. Logit model for each product for each customer
+
+3. Find the most frequent N-tuples of products purchased by each customer (N = 1,2,3,...)
+
+4. Sensitivity of loss function to mis-prediction and None predictions
+
+5. How customers differ in terms of average of days_since_prior_order?
+
+6. What is the (average) proportion of products in the train set relative to total number of unique products ordered by a customer?
+
+7. Benchmarks:
+	a. use the last set of products in prior set
+	b. use all the products in the prior set of a customer 
+        c. use all the products that were ordered again
+	d. use all the products that were ordered again + additional products based on some associative rules
+
+8. Does add to cart order matter for re-ordering?
+
+9. Influence on order_hour_of_day on product ordering?
+
+
+orders.csv, order_products__prior.csv, order_products__train.csv, products.csv, aisles.csv and departments.csv are the tables that constitute a database that describes orders places by customers, every order consist of several products, every product is located in a particular aisle in a particular department. This tables are normalized
+
+orders.csv contain every order ever made by all the customer (therefore it contains an order_id, user_id foreign keys), the field 'eval_set' splits this collection in three disjoint sets: prior, train and test. It does not contain the products in the order.
+
+order_products__prior.csv and order_prodcuts__train.csv are the tables that describes the products in every order (therefore both contains and order_id, product_id foreign keys) but order_products__prior.csv only contains products of orders that are in the 'prior' eval_set, and order_products__train.csv only contains products of orders that are in the 'train' eval_set
+
+If you were to do a SQL query that counts the number of distinct order_id's in the 'prior' eval_set of the orders table that number would be exactly the same as the number of distinct order_id's in the order_products__prior table. The same is true for the order_products__train table and the 'train' eval_set.
+
+https://www.kaggle.com/hongweizhang/how-to-calculate-f1-score
+
+def eval_fun(labels, preds):
+    labels = labels.split(' ')
+    preds = preds.split(' ')
+    rr = (np.intersect1d(labels, preds))
+    precision = np.float(len(rr)) / len(preds)
+    recall = np.float(len(rr)) / len(labels)
+    try:
+        f1 = 2 * precision * recall / (precision + recall)
+    except ZeroDivisionError:
+        return (precision, recall, 0.0)
+    return (precision, recall, f1)
+    
+-------------------------------
+
+Local Validation for Instacart Market Basket Analysis
+
+Problems for creating local scorings
+
+This is a multiclass and multilabel prediction challenge.
+
+The multiple labels that need to be predicted and which have a varying number of occurences for each row (the sample only shows the same ID per row but real predictions should have "None" or anywhere from 1 to about 80 IDs per row) make the typical scoring-implementations from SKlearn or similar packaged harder to use.
+
+These Packages don't (as far as I know) provide a way to score these multi-label predictions.
+
+In order to calculate a F1 score (which is used by Kaggle to score your prediction) on a local test-set, we need to create our own way of scoring predictions locally to be able to do more testing.
+
+https://www.kaggle.com/frankherfert/local-validation-with-detailed-product-comparison
+    
+    
+-------------------------------
+
+How are various Aisles distributed amongst various Departments?
+
+https://www.kaggle.com/indrajit/understanding-data-instacart
+
+
+-------------------------------
+
+
+Stupid recommender
+
+?????????????? ???????? ?????????? K - ?????????????? ?? ???????????????????????? ?? ?????????????? ?????????????? ?? ???????????? - 
+?? ?????????? ???????????????? top-K ?????????? ???????????????????? ?????????????? ?? ???????????????? ????????????????????????
+
+https://www.kaggle.com/djuuuu/rapid-data-exploratory
+
+
+-------------------------------
+
+The objectives of this notebook are threefold:
+1. To explore large data by storing it in disk (using sqlite)
+2. To Visualizing large data using Seaborn
+3. To attempt multiple techniques (market basket analysis, collaborative filtering, poisson regression etc.)
+Notebook is organized in Four Sections
+Section 1: I will setup the environment.
+Section 2: I will import the data from CSV to sqlite on disk.
+Section 3: I will start with our basic data exploration
+Section 4: I will attempt machine learning algorithms
+
+Credits: Inspired from 3 Kernels and below website https://plot.ly/python/big-data-analytics-with-pandas-and-sqlite/
+
+https://www.kaggle.com/prashantrenu/explore-large-data-python-sqlite-seaborn
+
+
+-------------------------------
+This notebook will analyze the following three basic variables that vary across each department:
+
+    quantity of products purchased
+    hour of day that products are purchased
+    days since reorder
+
+https://www.kaggle.com/jmcnugget/exploring-instacart-data-a-departmental-analysis
+
+
+-------------------------------
+
+# Enables R line magic (%R) and cell magic (%%R)
+%load_ext rpy2.ipython 
+
+# r enables calls to r objects and pandas2ri allows conversion both ways
+from rpy2.robjects import r, pandas2ri    
+
+# Ignore rpy2 RRuntimeWarning complaining about packages, they work fine!
+import warnings
+from rpy2.rinterface import RRuntimeWarning
+warnings.filterwarnings("ignore", category=RRuntimeWarning)
+
+# Enables rendering a string of HTML code as an image
+from IPython.display import display, HTML
+
+
+R vs Python for reading data and importing data into the other language
+
+Everyone still using pandas.read_csv() needs to read this. A much faster option is fread() from the R package data.table. On my late 2012 MBPr, using fread() instead of read_csv() makes a ~0.5GB data read take a few seconds instead of a few minutes. The reason behind this is that pandas.read_csv() is python based while fread() is C based.
+
+Further, reading into R and importing into python is much faster than the reverse process. When you read into python using pandas.read_csv() and then import into R using pandas2ri.py2ri(), you have made two complete copies of the data in memory. When you read into R using "data <- fread()" and then import into python using "py_var = pandas2ri.ri2py(r.data)" something different happens. A vector pointer is created instead of making a complete copy of the data. The creation of the vector pointer is almost instantaneous, while a complete copy of the data is unbearably slow for anything larger than ~0.5GB.
+
+Like the reading of the data the importing from one to the other takes a long time from Python to R and seconds from R to python.
+
+If you prefer using Python, consider using R as a speed loader for your data.
+
+
+https://www.kaggle.com/darkstardata/data-viz-with-diagrammer-and-wordcloud
+
+
+------------------------------
+
+Instacart's data science team plays a big part in providing this delightful shopping experience. Currently they use transactional data to develop models that predict which products a user will
+- buy again, 
+- try for the first time
+- add to their cart next during a session.
+
+
+orders.csv
+
+This file tells to which set (prior, train, test) an order belongs. 
+You are predicting reordered items only for the test set orders. 'order_dow' is the day of week.
+
+------------------------------
+
+As mentioned earlier, in this dataset, 4 to 100 orders of a customer are given (we will look at this later) and we need to predict the products that will be re-ordered. So the last order of the user has been taken out and divided into train and test sets. All the prior order informations of the customer are present in order_products_prior file. We can also note that there is a column in orders.csv file called eval_set which tells us as to which of the three datasets (prior, train or test) the given row goes to.
+
+
+_______________
+Produce is the largest department. Now let us check the reordered percentage of each department.
+
+Department wise reorder ratio:
+
+grouped_df = order_products_prior_df.groupby(["department"])["reordered"].aggregate("mean").reset_index()
+
+plt.figure(figsize=(12,8))
+sns.pointplot(grouped_df['department'].values, grouped_df['reordered'].values, alpha=0.8, color=color[2])
+plt.ylabel('Reorder ratio', fontsize=12)
+plt.xlabel('Department', fontsize=12)
+plt.title("Department wise reorder ratio", fontsize=15)
+plt.xticks(rotation='vertical')
+plt.show()
+
+Personal care has lowest reorder ratio and dairy eggs have highest reorder ratio.
+
+______________
+Aisle - Reorder ratio:
+
+grouped_df = order_products_prior_df.groupby(["department_id", "aisle"])["reordered"].aggregate("mean").reset_index()
+
+fig, ax = plt.subplots(figsize=(12,20))
+ax.scatter(grouped_df.reordered.values, grouped_df.department_id.values)
+for i, txt in enumerate(grouped_df.aisle.values):
+    ax.annotate(txt, (grouped_df.reordered.values[i], grouped_df.department_id.values[i]), rotation=45, ha='center', va='center', color='green')
+plt.xlabel('Reorder Ratio')
+plt.ylabel('department_id')
+plt.title("Reorder ratio of different aisles", fontsize=15)
+plt.show()
+
+
+______________
+Add to Cart - Reorder ratio:
+
+Let us now explore the relationship between how order of adding the product to the cart affects the reorder ratio.
+
+order_products_prior_df["add_to_cart_order_mod"] = order_products_prior_df["add_to_cart_order"].copy()
+order_products_prior_df["add_to_cart_order_mod"].ix[order_products_prior_df["add_to_cart_order_mod"]>70] = 70
+grouped_df = order_products_prior_df.groupby(["add_to_cart_order_mod"])["reordered"].aggregate("mean").reset_index()
+
+plt.figure(figsize=(12,8))
+sns.pointplot(grouped_df['add_to_cart_order_mod'].values, grouped_df['reordered'].values, alpha=0.8, color=color[2])
+plt.ylabel('Reorder ratio', fontsize=12)
+plt.xlabel('Add to cart order', fontsize=12)
+plt.title("Add to cart order - Reorder ratio", fontsize=15)
+plt.xticks(rotation='vertical')
+plt.show()
+
+Looks like the products that are added to the cart initially are more likely to be reordered again compared to the ones added later. This makes sense to me as well since we tend to first order all the products we used to buy frequently and then look out for the new products available.
+
+https://www.kaggle.com/sudalairajkumar/simple-exploration-notebook-instacart
+
+
+
+************************************************************
+************************************************************
+
+Association Rules
+There are many ways to see the similarities between items. These are techniques that 
+fall under the general umbrella of association. The outcome of this type of technique, 
+in simple terms, is a set of rules that can be understood as "if this, then that".
+
+Applications
+So what kind of items are we talking about?
+There are many applications of association:
+Product recommendation - like Amazon's "customers who bought that, also bought this"
+Music recommendations - like Last FM's artist recommendations
+Medical diagnosis - like with diabetes really cool stuff
+Content optimisation - like in magazine websites or blogs
+
+In this post we will focus on the retail application - it is simple, intuitive, 
+and the dataset comes packaged with R making it repeatable.
+
+The Groceries Dataset
+Imagine 10000 receipts sitting on your table. Each receipt represents 
+a transaction with items that were purchased. The receipt is a representation 
+of stuff that went into a customer's basket - and therefore 'Market Basket Analysis'.
+
+That is exactly what the Groceries Data Set contains: a collection of receipts 
+with each line representing 1 receipt and the items purchased. Each line is 
+called a transaction and each column in a row represents an item. You can 
+download the Groceries data set to take a look at it, but this is not a necessary step.
+
+http://www.salemmarafi.com/code/market-basket-analysis-with-r/
+
+**********************************************************
+
+Association Rules and Market Basket Analysis with R
+
+In today's data-oriented world, just about every retailer has amassed a huge 
+database of purchase transaction. Each transaction consists of a number of products 
+that have been purchased together. A natural question that you could answer from 
+this database is: What products are typically purchased together? 
+
+This is called Market Basket Analysis (or Affinity Analysis). 
+A closely related question is: Can we find relationships between certain products, 
+which indicate the purchase of other products? For example, if someone purchases avocados and salsa, 
+it's likely they'll purchase tortilla chips and limes as well. 
+This is called association rule learning, a data mining technique used by retailers
+to improve product placement, marketing, and new product development.
+
+R has an excellent suite of algorithms for market basket analysis in the arules package by Michael Hahsler and colleagues. It includes support for both the Apriori algorithm and the ECLAT (equivalence class transformation algorithm). You can find an in-depth description of both techniques (including several examples) in the Introduction to arules vignette. The slides below, by Yanchang Zhao provide a nice overview, and you can find further examples at RDataMining.com.
+
+http://blog.revolutionanalytics.com/2015/04/association-rules-and-market-basket-analysis-with-r.html
+
+
+**********************************************************
+
+A-Priori is a memory eficient algorithm that select the itemsets in a set of baskets that have frequency larger than a threshold called "support". First, the algorithm makes a "data pass" thru all baskets to select the items whose frequency is larget than the support. Then it makes a second data pass to select the pair of items whose frequency is larger than the support. And so on, until the algorithm reaches the desired itemset size.
+
+It's important to note that the frequent itemsets found in each datapass are stored in memory to be used in the next data pass. Concretely, if item 132 was frequent in the first data pass, it is a candidate for the next data pass since we may find that items (132, 144) are frequent too. On the other hand, if item 222 is not frequent in the first data pass, there is no need to include it in the second data pass because there is no way it will become frequent when joined with another item.
+
+This algorithm avoids doing a cross product comparision which would require O(n^2) memory. The memory used by this algorithm depends on the support chosen, but it's typically low.
+
+http://blog.derekfarren.com/2015/02/how-to-implement-large-scale-market.html
+
+**********************************************************
+
+Market Basket Analysis/Association Rule Mining using R package - arules
+
+In my previous post, i had discussed about Association rule mining in some detail.  Here i have shown the implementation of the concept using open source tool R using the package arules. Market Basket Analysis is a specific application of Association rule mining, where retail transaction baskets are analysed to find the products which are likely to be purchased together. The analysis output forms the input for  recomendation engines/marketing strategies. Association rule mining cannot be done using Base SAS/ Enterprise Guide and hence R seems to be the best option in my opinion.
+The arules package has Apriori algorithm which i will be demonstrating here using a sample transaction file called "Transactions_sample.csv"( find below)
+
+R Source Code:
+
+#To set the working directory to folder where source files are placed.(set this to directory as per your needs)
+setwd("C:/Documents and Settings/deepak.babu/Desktop/output");
+
+#Install the R package arules
+install.packages("arules");
+
+#load the arules package
+library("arules");
+
+# read the transaction file as a Transaction class
+# file - csv/txt
+# format - single/basket (For 'basket' format, each line in the transaction data file represents a transaction
+#           where the items (item labels) are separated by the characters specified by sep. For 'single' format,
+#           each line corresponds to a single item, containing at least ids for the transaction and the item. )
+# rm.duplicates - TRUE/FALSE
+# cols -   For the 'single' format, cols is a numeric vector of length two giving the numbers of the columns (fields)
+#           with the transaction and item ids, respectively. For the 'basket' format, cols can be a numeric scalar
+#           giving the number of the column (field) with the transaction ids. If cols = NULL
+# sep - "," for csv, "\t" for tab delimited
+txn = read.transactions(file="Transactions_sample.csv", rm.duplicates= FALSE, format="single",sep=",",cols =c(1,2));
+
+# Run the apriori algorithm
+basket_rules <- apriori(txn,parameter = list(sup = 0.5, conf = 0.9,target="rules"));
+
+# Check the generated rules using inspect
+inspect(basket_rules);
+
+#If huge number of rules are generated specific rules can read using index
+inspect(basket_rules[1]);
+
+ 
+
+#############################################################################
+##############  SUPPLEMENTARY  INFO  ########################################
+#############################################################################
+#To visualize the item frequency in txn file
+itemFrequencyPlot(txn);
+
+#To see how the transaction file is read into txn variable.
+inspect(txn);
+
+https://prdeepakbabu.wordpress.com/2010/11/13/market-basket-analysisassociation-rule-mining-using-r-package-arules/
+
+*******************************************************************************
+*******************************************************************************
+
+Using Market Basket Analysis to predict Gene Expressions in various Lung Cancers
+
+We use Lung Cancer data from the Dana Farber Cancer Institute, available from the Kent Ridge Bio-Medical Datasets page.
+The data contains gene expression data for 203 individuals. Each record has 12,600 gene expressions so its a very wide record. The target variable (ie, the type of Lung Cancer) can be one of 5 values each corresponding to one type of Lung Cancer - Adenocarcinoma of Lung (ADEN), Squamous Cell Carcinoma (SQUA), Carcinoid (COID), Small Cell Lung Cancer (SCLC) and Normal (NORMAL).
+
+Our objective is to analyze this data and identify sets of gene expressions that 
+occur frequently for a given lung cancer type using the Apriori algorithm. 
+The hope is that being able to specify frequently co-occurring gene expressions 
+to identify a disease would make it easier to predict or confirm a disease based on gene expressions.
+
+We will do our analysis with Python so we first import the necessary libraries.
+
+https://gist.github.com/sujitpal/9999328
+
+****************************************************************************
+****************************************************************************
+
+Market Basket Analysis - Mining Frequent Pairs in Python
+
+Please note that this algorithm has execution time near O(n^2), or N over 2 pair combinations, 
+and needs almost as much space, thus not suitable for mining frequent associations with large 
+number of products. Check the Apriori algorithm for implementation with large data sets.
+
+https://dzenanhamzic.com/2017/01/19/market-basket-analysis-mining-frequent-pairs-in-python/
+
+############################################################################
+############################################################################
+
+R - Association Rules - Market Basket Analysis (part 1)
+
+https://www.youtube.com/watch?v=b5hgDPa7a2k
+https://www.youtube.com/watch?v=Gy_nqzJMNrI
+
+----------
+
+Data Science - Part VI - Market Basket and Product Recommendation Engines
+
+https://www.youtube.com/watch?v=898mey_dKSs
+
+----------
+
+Data Science - Part VIII - Artifical Neural Network
+
+https://www.youtube.com/watch?v=9EYgJPXo1hs
+
+NN for time series data: women convictions in Canada 1938 - 1965
+
+----------
+
+Code | Market Basket Analysis | Association Rules | R Programming
+
+Published on Mar 19, 2017
+In my previous video I talked about the theory of Market basket analysis 
+or association rules and in this video I have explained the code that you 
+need to write to achieve the market basket analysis functionality in R. 
+This will help you to develop your own market basket analysis or association 
+rules application to mine the important rules which are present in the data.
+
+https://www.youtube.com/watch?v=2otyDYe_V0o
+
