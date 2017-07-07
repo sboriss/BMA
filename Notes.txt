@@ -43,6 +43,24 @@ by Michael J. A. Berry
 
 9. Influence on order_hour_of_day on product ordering?
 
+10. Crossplot of number of products in the train set and average/last number of products in prior orders.
+
+	Helps to address two questions?
+		a. How many products to forecast in the test order set?
+		b. Which products?
+
+11. Features:
+	a. Size of an order in prior (average/last), in train
+	b. Proportion of re-ordered items in prior (average/last), in train
+	c. Density of orders in prior
+	d. 
+	e. 
+	f. 
+	i. 
+	j. 
+
+12. Is characteristics of users similar in train and test?
+
 
 orders.csv, order_products__prior.csv, order_products__train.csv, products.csv, aisles.csv and departments.csv are the tables that constitute a database that describes orders places by customers, every order consist of several products, every product is located in a particular aisle in a particular department. This tables are normalized
 
