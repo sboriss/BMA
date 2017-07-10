@@ -1,0 +1,224 @@
+---
+title: "XGBoost for Instacart"
+author: "Boriss"
+date: "July 10, 2017"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+cat("\014")  # clear console
+rm(list=ls(all=TRUE))
+
+require("knitr")
+opts_knit$set(root.dir = 'c:/BBB/PROPACAD/CAPSTONE/BASKET/')
+
+
+library(data.table)
+library(dplyr)
+library(tidyr)
+```
+
+```{r}
+path <- "./DATA"
+
+orders      <- fread(file.path(path,'orders.csv'               ) )
+products    <- fread(file.path(path,'products.csv'             ) )
+ordert      <- fread(file.path(path,'order_products__train.csv') )
+orderp      <- fread(file.path(path,'order_products__prior.csv') )
+aisles      <- fread(file.path(path,'aisles.csv'               ) )
+departments <- fread(file.path(path,'departments.csv'          ) )
+```
+
+```{r}
+# Reshape data ------------------------------------------------------------
+aisles$aisle           <- as.factor(aisles$aisle)
+departments$department <- as.factor(departments$department)
+orders$eval_set        <- as.factor(orders$eval_set)
+products$product_name  <- as.factor(products$product_name)
+```
+
+Substitute aisle_id and department_id with their names from aisles and department
+Dataframe products before
+```{r}
+head( products )
+```
+and after
+
+```{r}
+products <- products %>% 
+  inner_join(aisles) %>% inner_join(departments) %>% 
+  select(-aisle_id, -department_id)
+rm(aisles, departments) # remove (aisles, departments) from memory
+head( products)
+```
+
+### Add 
+```{r}
+head( orders )
+```
+```{r}
+head( ordert, n = 10 )
+```
+
+**match** returns a vector of the positions of (first) matches of its first argument in its second.
+
+```{r}
+ordert$order_id[1:10]
+#NB! orders contain order_id's in prior, train, test 
+#match(ordert$order_id[1:10], orders$order_id) returns indexes of order_id in ordert in orders
+
+orders[ match(ordert$order_id[1:10], orders$order_id), ]
+
+```
+
+### Add corresponding user_id to ordert
+```{r}
+ordert$user_id <- orders$user_id[ match(ordert$order_id, orders$order_id) ]
+head( ordert, n = 10 )
+```
+
+```{r}
+head( orderp, n = 10 )
+head( orders, n = 10 )
+```
+### Expand orders with detailed information per order from orderp
+```{r}
+orders_products <- orders %>% inner_join(orderp, by = "order_id")
+head(orders_products, n = 25 )
+unique( orders_products$eval_set ) #check whether orders are only from prior
+rm(orderp)
+gc()
+```
+
+### Check how many unique products were ordered in prior 
+```{r}
+hist( orders_products$product_id, breaks = 1000 )
+length( unique( orders_products$product_id ) )
+dim( products)
+```
+
+
+arrange {dplyr}: arrange(user_id, order_number, product_id) sorts orders_products in ascending order 
+- first according to user_id
+- second according to order_number
+- third accorindg to product_id
+
+mutate(product_time = row_number()): i.e. row_number(): equivalent to rank(ties.method = "first")
+create a variable that tracks how many times each product_id was ordered by each user_id
+```{r}
+prd_tmp <- orders_products %>%
+  arrange(user_id, order_number, product_id) %>%
+  group_by(user_id, product_id) %>%
+  mutate(product_time = row_number()) %>%
+  ungroup()
+head( prd_tmp, n = 40 )
+```
+```{r}
+prd_tmp2 = head( prd_tmp, n = 140 )
+prd_tmp %>% filter( product_id == 196 ) %>% select(user_id, product_id, product_time) %>% head( n = 30 )
+```
+
+### Determine product characteristics:
+-- prod_orders: how many times a product_id was ordered by all users
+-- prod_reorders: how many times a product_id was reordered by all users
+-- prod_first_orders: number of times a product_id was ordered for the first time
+-- prod_second_order: number of times a product_id was ordered for the second time
+```{r} 
+
+# Products ----------------------------------------------------------------
+rm( prd_tmp, prd_tmp2 )
+
+prd <- orders_products %>%
+  arrange(user_id, order_number, product_id) %>%
+  group_by(user_id, product_id) %>%
+  mutate(product_time = row_number()) %>%
+  ungroup() %>%
+  group_by(product_id) %>%
+  summarise(
+    prod_orders        = n(),
+    prod_reorders      = sum(reordered),
+    prod_first_orders  = sum(product_time == 1),
+    prod_second_orders = sum(product_time == 2)
+  )
+prd_tmp3 = head( prd, n = 40 )
+```
+
+### create several features
+prod_reorder_probability - probability of first re-order
+prod_reorder_times       - aka rd$prod_orders / prd$prod_first_orders as 
+                           prd$prod_first_orders + prd$prod_reorders = aka rd$prod_orders see prd_tmp3
+                         : inverse of share of prod_first_orders in prod_orders, if that share is close to one,
+                           then it is very likely that this product on average was bought only once
+prod_reorder_ratio       - share of reorders in orders
+
+```{r}
+prd$prod_reorder_probability <- prd$prod_second_orders / prd$prod_first_orders
+prd$prod_reorder_times       <- 1 + prd$prod_reorders  / prd$prod_first_orders
+prd$prod_reorder_ratio       <- prd$prod_reorders      / prd$prod_orders
+
+prd <- prd %>% select(-prod_reorders, -prod_first_orders, -prod_second_orders)
+
+rm(products)
+gc()
+
+prd_tmp4 = head( prd, n = 40 )
+
+hist( prd$prod_reorder_ratio, breaks = 1000)
+
+```
+
+```{r}
+hist( prd$prod_reorder_ratio, breaks = 5000)
+sum( prd$prod_reorder_ratio == 0) 
+
+barplot( cumsum( prd$prod_reorder_ratio[ order( prd$prod_reorder_ratio ) ] ),
+         main = "Ordered reorder ratio by product_id" )
+
+summary( prd$prod_reorder_ratio )
+```
+
+```{r}
+
+# Products ----------------------------------------------------------------
+prd <- orders_products %>%
+  arrange(user_id, order_number, product_id) %>%
+  group_by(user_id, product_id) %>%
+  mutate(product_time = row_number()) %>%
+  ungroup() %>%
+  group_by(product_id) %>%
+  summarise(
+    prod_orders = n(),
+    prod_reorders = sum(reordered),
+    prod_first_orders = sum(product_time == 1),
+    prod_second_orders = sum(product_time == 2)
+  )
+
+prd$prod_reorder_probability <- prd$prod_second_orders / prd$prod_first_orders
+prd$prod_reorder_times <- 1 + prd$prod_reorders / prd$prod_first_orders
+prd$prod_reorder_ratio <- prd$prod_reorders / prd$prod_orders
+
+prd <- prd %>% select(-prod_reorders, -prod_first_orders, -prod_second_orders)
+
+rm(products)
+gc()
+
+```
+
+### characteristics of users in prior set
+- user_order_number         : order_number per user
+- user_period               : how long a user_id was a customer
+- user_mean_days_since_prior: average shopping frequency
+```{r}
+# Users -------------------------------------------------------------------
+users <- orders %>%
+  filter(eval_set == "prior") %>%
+  group_by(user_id) %>%
+  summarise(
+    user_orders = max(order_number),
+    user_period = sum(days_since_prior_order, na.rm = T),
+    user_mean_days_since_prior = mean(days_since_prior_order, na.rm = T)
+  )
+users_tmp = head( users, n = 40 )
+```
