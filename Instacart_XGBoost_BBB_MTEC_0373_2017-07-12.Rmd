@@ -1,0 +1,564 @@
+---
+title: "XGBoost for Instacart"
+author: "Boriss"
+date: "July 10, 2017"
+output: html_document
+---
+
+##Add_on:
+- 2017-07-13: add order_dow (day_of_week) and order_hour_of_day to feature set in the model
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+cat("\014")  # clear console
+rm(list=ls(all=TRUE))
+
+require("knitr")
+opts_knit$set(root.dir = 'c:/BBB/PROPACAD/CAPSTONE/BASKET/')      #T520
+#opts_knit$set(root.dir = 'c:/Users/sboriss/BBB/PROPACAD/')         # KOF
+#opts_knit$set(root.dir = 'U:/BBB/PROPACAD/')                        # MTEC-0373
+
+library(data.table)
+library(dplyr)
+library(tidyr)
+```
+
+```{r}
+# path_main = "U:/BBB/PROPACAD/"
+# path_data = paste0(path_main, 'DATA/')
+# path_subm = paste0(path_main, 'SUBM/')
+# 
+# orders      <- fread( paste0(path_data, 'orders.csv') ) 
+# products    <- fread( paste0(path_data, 'products.csv'             ) )
+# ordert      <- fread( paste0(path_data, 'order_products__train.csv') )
+# orderp      <- fread( paste0(path_data, 'order_products__prior.csv') )
+# aisles      <- fread( paste0(path_data, 'aisles.csv'               ) )
+# departments <- fread( paste0(path_data, 'departments.csv'          ) )
+# 
+# ordert_tmp = head( ordert, n = 20 )
+
+```
+
+
+```{r}
+path <- "./DATA"
+
+orders      <- fread(file.path(path,'orders.csv'               ) )
+products    <- fread(file.path(path,'products.csv'             ) )
+ordert      <- fread(file.path(path,'order_products__train.csv') )
+orderp      <- fread(file.path(path,'order_products__prior.csv') )
+aisles      <- fread(file.path(path,'aisles.csv'               ) )
+departments <- fread(file.path(path,'departments.csv'          ) )
+```
+
+```{r}
+# Reshape data ------------------------------------------------------------
+aisles$aisle           <- as.factor(aisles$aisle)
+departments$department <- as.factor(departments$department)
+orders$eval_set        <- as.factor(orders$eval_set)
+products$product_name  <- as.factor(products$product_name)
+```
+
+Substitute aisle_id and department_id with their names from aisles and department
+Dataframe products before
+```{r}
+head( products )
+```
+and after
+
+```{r}
+products <- products %>% 
+  inner_join(aisles) %>% inner_join(departments) %>% 
+  select(-aisle_id, -department_id)
+rm(aisles, departments) # remove (aisles, departments) from memory
+head( products)
+```
+
+### Add 
+```{r}
+orders_tmp = head( orders, n = 11 )
+orders_test_tmp = orders %>% filter( eval_set == 'test' ) %>% 
+                         head( n = 10 )
+ordert_tmp = head( ordert, n = 10 )
+orderp_tmp = head( orderp, n = 10 )
+```
+
+
+
+**match** returns a vector of the positions of (first) matches of its first argument in its second.
+
+```{r}
+ordert$order_id[1:10]
+#NB! orders contain order_id's in prior, train, test 
+#match(ordert$order_id[1:10], orders$order_id) returns indexes of order_id in ordert in orders
+
+orders[ match(ordert$order_id[1:10], orders$order_id), ]
+
+```
+
+### Add corresponding user_id to ordert
+```{r}
+ordert$user_id <- orders$user_id[ match(ordert$order_id, orders$order_id) ]
+ordert_tmp1= head( ordert, n = 10 )
+```
+
+### Expand orders with detailed information per order from orderp: 
+- rows with eval_set = 'train' and eval_set = 'test' are gone
+```{r}
+orders_products     = orders %>% inner_join(orderp, by = "order_id")
+orders_products_tmp = head(orders_products, n = 250 )
+unique( orders_products$eval_set ) #check whether orders are only from prior
+rm(orderp)
+gc()
+```
+
+### check what happens to test rows in orders: these are not there
+```{r}
+orders_products_test_tmp = orders_products %>% 
+                           filter( eval_set == 'test' ) %>% 
+                           head( n = 10 )
+```
+
+
+### Check how many unique products were ordered in prior 
+```{r}
+hist( orders_products$product_id, breaks = 1000 )
+length( unique( orders_products$product_id ) )
+dim( products)
+```
+
+
+arrange {dplyr}: arrange(user_id, order_number, product_id) sorts orders_products in ascending order 
+- first according to user_id
+- second according to order_number
+- third accorindg to product_id
+
+mutate(product_time = row_number()): i.e. row_number(): equivalent to rank(ties.method = "first")
+create a variable that tracks how many times each product_id was ordered by each user_id
+```{r}
+prd_tmp0 <- orders_products %>% filter( user_id == 1) %>% 
+  arrange(user_id, order_number, product_id) %>%
+  group_by(user_id, product_id) %>%
+  mutate(product_time = row_number()) 
+```
+
+```{r}
+prd_tmp <- orders_products %>%
+  arrange(user_id, order_number, product_id) %>%
+  group_by(user_id, product_id) %>%
+  mutate(product_time = row_number()) %>%
+  ungroup()
+```
+
+```{r}
+prd_tmp2 = head( prd_tmp, n = 140 )
+prd_tmp %>% filter( product_id == 196 ) %>% select(user_id, product_id, product_time) %>% head( n = 30 )
+
+
+```
+
+### Determine product characteristics:
+- prod_orders: how many times a product_id was ordered by all users
+- prod_reorders: how many times a product_id was reordered by all users
+- prod_first_orders: number of times a product_id was ordered for the first time
+- prod_second_order: number of times a product_id was ordered for the second time
+```{r} 
+
+# Products ----------------------------------------------------------------
+rm( prd_tmp, prd_tmp2 )
+
+prd <- orders_products %>%
+  arrange(user_id, order_number, product_id) %>%
+  group_by(user_id, product_id) %>%
+  mutate(product_time = row_number()) %>%
+  ungroup() %>%
+  group_by(product_id) %>%
+  summarise(
+    prod_orders        = n(),
+    prod_reorders      = sum(reordered),
+    prod_first_orders  = sum(product_time == 1),
+    prod_second_orders = sum(product_time == 2)
+  )
+prd_tmp3 = head( prd, n = 40 )
+```
+
+### create several features
+- prod_reorder_probability: probability of first re-order
+- prod_reorder_times:
+  - aka prd\$prod\_orders / prd\$prod\_first\_orders as 
+                           prd\$prod_first\_orders + prd\$prod\_reorders = aka rd\$prod\_orders see prd\_tmp3
+                         : inverse of share of prod_first_orders in prod_orders, if that share is close to one,
+                           then it is very likely that this product on average was bought only once
+-prod_reorder_ratio: share of reorders in orders
+
+```{r}
+prd$prod_reorder_probability <- prd$prod_second_orders / prd$prod_first_orders
+prd$prod_reorder_times       <- 1 + prd$prod_reorders  / prd$prod_first_orders
+prd$prod_reorder_ratio       <- prd$prod_reorders      / prd$prod_orders
+
+prd <- prd %>% select(-prod_reorders, -prod_first_orders, -prod_second_orders)
+
+rm(products)
+gc()
+
+prd_tmp4 = head( prd, n = 40 )
+
+hist( prd$prod_reorder_ratio, breaks = 1000)
+
+```
+
+```{r}
+hist( prd$prod_reorder_ratio, breaks = 5000)
+sum( prd$prod_reorder_ratio == 0) 
+
+barplot( prd$prod_reorder_ratio[ order( prd$prod_reorder_ratio ) ],
+         main = "Ordered reorder ratio by product_id" )
+
+summary( prd$prod_reorder_ratio )
+```
+
+```{r}
+
+# Products ----------------------------------------------------------------
+prd <- orders_products %>%
+  arrange(user_id, order_number, product_id) %>%
+  group_by(user_id, product_id) %>%
+  mutate(product_time = row_number()) %>%
+  ungroup() %>%
+  group_by(product_id) %>%
+  summarise(
+    prod_orders = n(),
+    prod_reorders = sum(reordered),
+    prod_first_orders = sum(product_time == 1),
+    prod_second_orders = sum(product_time == 2)
+  )
+
+prd$prod_reorder_probability <- prd$prod_second_orders / prd$prod_first_orders
+prd$prod_reorder_times <- 1 + prd$prod_reorders / prd$prod_first_orders
+prd$prod_reorder_ratio <- prd$prod_reorders / prd$prod_orders
+
+prd <- prd %>% select(-prod_reorders, -prod_first_orders, -prod_second_orders)
+
+rm(products)
+gc()
+
+```
+
+## characteristics of users in prior set
+- user_order_number          : order_number per user
+- user_period                : how long a user_id was a customer
+- user_mean_days_since_prior : average shopping frequency
+- user_mean_order_dow        : average dow for ordering
+- user_mean_order_hour_of_day: average hod for ordering
+```{r}
+# Users -------------------------------------------------------------------
+users <- orders %>%
+  filter(eval_set == "prior") %>%
+  group_by(user_id) %>%
+  summarise(
+    user_orders = max(order_number),
+    user_period = sum(days_since_prior_order, na.rm = T),
+    user_mean_days_since_prior = mean(days_since_prior_order, na.rm = T),
+    user_mean_order_dow        = mean( order_dow),
+    user_mean_order_hour_of_day = mean( order_hour_of_day )
+  )
+users_tmp = head( users, n = 40 )
+```
+
+```{r}
+# Users -------------------------------------------------------------------
+hist( users$user_mean_order_dow)
+hist( users$user_mean_order_hour_of_day )
+```
+
+- user_total_products: total number of products ordered
+- user_reorder_ratio: share of products reordered in orders_id[2:last]; 
+  there were no reorders in the first order [order_number = 1]
+- user_distinct_products: number of unique products ordered
+```{r}
+us <- orders_products %>%
+  group_by(user_id) %>%
+  summarise(
+    user_total_products = n(),                                        #how many products were purchased in total
+    user_reorder_ratio = sum(reordered == 1) / sum(order_number > 1), #NB! why divide by sum(order_number > 1)?
+    user_distinct_products = n_distinct(product_id)                   #how many distict products were purchased
+  )
+```
+
+### Add columns ( user_total_products, user_reorder_ratio, user_distinct_products)  from us to user
+- user_average_basket: size of average basket per order
+```{r}
+users <- users %>% inner_join(us)
+users$user_average_basket <- users$user_total_products / users$user_orders
+
+```
+```{r}
+users_tmp1 = head( users, n = 40 )
+```
+
+```{r}
+plot( users$user_average_basket, users$user_reorder_ratio)
+```
+
+#add order_id from train/test
+
+```{r}
+orders_tmp = head( orders, n = 50)
+```
+
+```{r}
+us <- orders %>%
+  filter(eval_set != "prior") %>%
+  select(user_id, order_id, eval_set,
+         days_since_last_prior_order = days_since_prior_order, 
+         postprior_order_dow         = order_dow, 
+         postprior_order_hour_of_day = order_hour_of_day
+         )
+
+users <- users %>% inner_join(us)
+
+rm(us)
+gc()
+
+```
+
+```{r}
+users_tmp2 = head( users, n = 50)
+```
+
+# Database ----------------------------------------------------------------
+### create features
+- up\_orders: how many times a product\_id was ordered by user\_id
+- up_first_order: in which order a product_id was first ordered
+- up_last_order:  in which order a product_id was last  ordered
+
+```{r}
+data <- orders_products %>%
+  group_by(user_id, product_id) %>% 
+  summarise(
+    up_orders = n(),
+    up_first_order = min(order_number),
+    up_last_order  = max(order_number),
+    up_average_cart_position = mean(add_to_cart_order)
+  )
+
+data_tmp = head( data, n = 250 )
+
+
+rm(orders_products, orders)
+```
+
+```{r}
+data <- data %>% 
+  inner_join(prd, by = "product_id") %>%
+  inner_join(users, by = "user_id")
+
+data_tmp1 = head( data, n = 250 )
+```
+
+### create features
+- up\_order\_rate: user-specific order intensity of a product_id
+                 : proportion of times a product_id was ordered in total number of orders
+- up\_orders\_since\_last_order: how many orders ago a product was last ordered
+- up_order_rate_since_first_order: product-specific order intensity over the time between a product was first ordered and the last order
+```{r}
+data$up_order_rate                   <- data$up_orders / data$user_orders
+data$up_orders_since_last_order      <- data$user_orders - data$up_last_order
+data$up_order_rate_since_first_order <- data$up_orders / (data$user_orders - data$up_first_order + 1)
+
+data_tmp2 = head( data, n = 250 )
+```
+
+
+#add train 
+```{r}
+data <- data %>% 
+  left_join(ordert %>% select(user_id, product_id, reordered), 
+            by = c("user_id", "product_id"))
+
+data_tmp3 = head( data, n = 250 )
+
+rm(ordert, prd, users)
+gc()
+```
+
+##there are no labels 'prior' in data
+```{r}
+data_prior = data %>% filter( eval_set == "prior")
+data_train = data %>% filter( eval_set == "train")
+data_test  = data %>% filter( eval_set == "test")
+
+dim( data_prior )
+dim( data_train )
+dim( data_test )
+
+#ordert_user_id_1 = ordert %>% filter( user_id == 1 ) %>% arrange( product_id )
+```
+
+
+# Train / Test datasets ---------------------------------------------------
+```{r}
+train <- as.data.frame(data[data$eval_set == "train",])
+train$eval_set <- NULL
+train$user_id <- NULL
+train$product_id <- NULL
+train$order_id <- NULL
+train$reordered[is.na(train$reordered)] <- 0
+
+train_tmp = head( train, n = 250 )
+
+test <- as.data.frame(data[data$eval_set == "test",])
+test$eval_set <- NULL
+test$user_id <- NULL
+test$reordered <- NULL
+#NB! keep order_id and product_id: use later to predict the basket
+
+test_tmp = head( test, n = 250 )
+
+rm(data)
+gc()
+```
+
+```{r}
+dim( train )
+colnames( train )
+dim( test )
+colnames( test )
+```
+
+```{r}
+library(xgboost)
+library(Ckmeans.1d.dp)
+
+params <- list(
+  "objective"           = "reg:logistic",
+  "eval_metric"         = "logloss", # rmse
+  "eta"                 = 0.2,
+  "max_depth"           = 5,
+  "min_child_weight"    = 1,  #10
+  "gamma"               = 0.70,
+  "subsample"           = 0.77,
+  "colsample_bytree"    = 0.95,
+  "alpha"               = 2e-05,
+  "lambda"              = 6 #10
+)
+
+subtrain <- train %>% sample_frac(0.15)
+subtrain_tmp = head(subtrain, n = 100) 
+
+ch_stdn_data <- FALSE
+
+if( ch_stdn_data ){
+  
+  # standardize features in subtrain set
+  subtrain_mat      = as.matrix(subtrain %>% select(-reordered) )
+  subtrain_mat_stnd = scale( subtrain_mat ); rm( subtrain_mat )
+  X                 = xgb.DMatrix(subtrain_mat_stnd, label = subtrain$reordered ); rm( subtrain_mat_stnd )  
+  
+}else{
+  
+  X = xgb.DMatrix( as.matrix(subtrain %>% select(-reordered) ), label = subtrain$reordered ); 
+  
+}
+
+
+if(FALSE){
+  cv <- xgb.cv(data = X, params = params, nrounds =100, nthread = 8, nfold = 5)
+}
+```
+
+```{r}
+model = xgboost(data = X, params = params, nrounds = 100, nthread = 8)
+
+importance <- xgb.importance(colnames(X), model = model)
+xgb.ggplot.importance(importance)
+
+rm(X, importance, subtrain)
+gc()
+```
+
+# Predict with model -------------------------------------------------------------
+```{r}
+#rm( train )
+if( ch_stdn_data ){
+  
+   X <- xgb.DMatrix( scale( as.matrix(test %>% select(-order_id, -product_id)) ) )
+  
+}else{
+  
+   X <- xgb.DMatrix( as.matrix(test %>% select(-order_id, -product_id) ) ) 
+   
+}
+
+test$reordered <- predict(model, X)
+
+test_tmp1 = head( test, n = 250 )
+```
+
+```{r}
+cutoff = 0.21
+
+hist( test$reordered )
+abline( v = cutoff , col = 2, lwd = 2)
+mean( test$reordered > cutoff )
+```
+
+##compute average predicted probability of reordered
+```{r}
+test_1st <- test %>%
+            group_by( order_id ) %>% 
+            summarise(
+            #pred_prob_reorder = median(   reordered)              #08
+            #pred_prob_reorder = quantile( reordered, 0.75)        #09
+            #pred_prob_reorder = quantile( reordered, 0.85)        #10
+            #pred_prob_reorder = quantile( reordered, 0.75) + 0.1  #11
+             pred_prob_reorder = quantile( reordered, 0.5) + 0.15  #12 LB 0.369
+            
+     )
+test_1st_tmp = head( test_1st, n = 250 )
+```
+
+##put back order-specific mean of predicted probabilities of reorder
+```{r}
+test_2nd <- test_1st %>% 
+            left_join( test, by = "order_id")
+
+test_2nd_tmp = head( test_2nd, n = 250 )
+
+test_2nd$reordered_in = ( test_2nd$reordered > test_2nd$pred_prob_reorder) * 1
+#test_2nd$reordered_in = ( test_2nd$reordered > cutoff) * 1
+
+test_2nd_tmp1 = head( test_2nd, n = 250 )
+
+#compute predicted average basket size
+pred_basket <- test_2nd %>%
+              group_by( order_id ) %>%
+              summarise(
+                pred_basket_size = sum( reordered_in )
+              )
+pred_basket_tmp = head( pred_basket, n = 20 )              
+
+summary( pred_basket_tmp$pred_basket_size )
+
+submission <- test_2nd %>%
+  filter(reordered_in == 1) %>%
+  group_by(order_id) %>%
+  summarise(
+    products = paste(product_id, collapse = " ")
+  )
+
+submission_tmp = head( submission, n = 250 )
+
+missing <- data.frame(
+  order_id = unique(test$order_id[!test$order_id %in% submission$order_id]),
+  products = "None"
+)
+
+submission <- submission %>% bind_rows(missing) %>% arrange(order_id)
+
+submission_tmp = head( submission, n = 250 )
+
+write.csv(submission, file = paste0( path_subm,"submit12_pred.csv"), row.names = F)
+```
+
