@@ -8,6 +8,8 @@
 #
 ###########################################################################################################
 
+# Add-on: 
+
 
 cat("\014")  # clear console
 rm(list=ls(all=TRUE))
@@ -45,10 +47,39 @@ rm(aisles, departments)
 
 ordert$user_id <- orders$user_id[match(ordert$order_id, orders$order_id)]
 
-orders_products <- orders %>% inner_join(orderp, by = "order_id")
+#retain only orders from prior
+orders_products_prior <- orders %>% inner_join(orderp, by = "order_id")
+
+orders_products_prior_tmp = head( orders_products_prior, n = 100 )
+unique( orders_products_prior_tmp$eval_set )
 
 rm(orderp)
 gc()
+
+#identify re-ordering customers in prior (https://www.kaggle.com/philippsp/exploratory-analysis-instacart)
+
+
+
+tmp <- order_products_prior %>% 
+  group_by(order_id) %>% 
+  summarize(m = mean(reordered),n=n()) %>% 
+  right_join(filter(orders,order_number>2), by="order_id")
+
+tmp2 <- tmp %>% 
+  filter(eval_set =="prior") %>% 
+  group_by(user_id) %>% 
+  summarize(n_equal = sum(m==1,na.rm=T), percent_equal = n_equal/n()) %>% 
+  filter(percent_equal == 1) %>% 
+  arrange(desc(n_equal))
+
+datatable(tmp2, class="table-condensed", style="bootstrap", options = list(dom = 'tp'))
+
+uniqueorders <- filter(tmp, user_id == 99753)$order_id
+tmp <- order_products_prior %>% 
+  filter(order_id %in% uniqueorders) %>% 
+  left_join(products, by="product_id")
+
+datatable(select(tmp,-aisle_id,-department_id,-organic), style="bootstrap", class="table-condensed", options = list(dom = 'tp'))
 
 
 # Products ----------------------------------------------------------------
@@ -245,6 +276,20 @@ X <- xgb.DMatrix(as.matrix(train_ud %>% select( -order_id, -product_id, -reorder
 train_ud$reordered_hat <- predict(model, X)
 
 hist( train_ud$reordered_hat )
+
+### identify re-ordering customers in train_ud
+hist( train_ud$user_reorder_ratio )
+hist( train_ud$up_order_rate )
+train_ud_tmp = head( train_ud, n = 100 )
+
+order_of_reordering_users = train_ud %>% 
+                            group_by( order_id ) %>% 
+                            summarise(
+                              mean_up_order_rate = mean( up_order_rate )          
+                            ) %>%
+                            filter( mean_up_order_rate == 1)
+                          
+                                
 
 #cutoff = 0.21
 
